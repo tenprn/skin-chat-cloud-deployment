@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Private runtime configuration created from the examples.
+env/*.env
+!env/*.env.example
+
+# Migration archives contain credentials and chat data; never commit them.
+migration/*.dump
+migration/*.tar.gz

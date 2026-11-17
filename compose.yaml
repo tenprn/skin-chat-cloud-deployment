@@ -1,0 +1,153 @@
+name: skin-chat-vm
+
+services:
+  database:
+    image: postgres:17.12
+    container_name: skin-chat-postgres
+    restart: unless-stopped
+    env_file:
+      - ./env/postgres.env
+    expose:
+      - "5432"
+    volumes:
+      - database_data:/var/lib/postgresql/data
+      - ./config/postgres/01-create-chat-app.sh:/docker-entrypoint-initdb.d/01-create-chat-app.sh:ro
+    networks:
+      - database_private
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  n8n:
+    image: n8nio/n8n:2.47.7
+    container_name: skin-chat-n8n
+    restart: unless-stopped
+    env_file:
+      - ./env/n8n.env
+    expose:
+      - "5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - database_private
+      - web_access
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5678/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  caddy:
+    image: caddy:2.11.9-alpine
+    container_name: skin-chat-caddy
+    restart: unless-stopped
+    env_file:
+      - ./env/proxy.env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - web_access
+    depends_on:
+      n8n:
+        condition: service_healthy
+      line-signature-gateway:
+        condition: service_healthy
+
+  line-signature-gateway:
+    build:
+      context: ./services/line-signature-gateway
+    image: skin-chat-line-signature-gateway:1.0.0
+    container_name: skin-chat-line-signature-gateway
+    restart: unless-stopped
+    env_file:
+      - ./env/proxy.env
+      - ./env/line-gateway.env
+    expose:
+      - "8080"
+    networks:
+      - web_access
+    depends_on:
+      n8n:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  pgadmin:
+    image: dpage/pgadmin4:9.19.0
+    container_name: skin-chat-pgadmin
+    profiles:
+      - admin
+    restart: unless-stopped
+    env_file:
+      - ./env/pgadmin.env
+    ports:
+      - "127.0.0.1:5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - database_private
+      - admin_access
+    depends_on:
+      database:
+        condition: service_healthy
+
+volumes:
+  n8n_data:
+    external: true
+    name: skin-chat-n8n-data
+
+  database_data:
+    name: skin-chat-postgres-data
+
+  pgadmin_data:
+    name: skin-chat-pgadmin-data
+
+  caddy_data:
+    name: skin-chat-caddy-data
+
+  caddy_config:
+    name: skin-chat-caddy-config
+
+networks:
+  database_private:
+    name: skin-chat-db-private
+    internal: true
+
+  web_access:
+    name: skin-chat-web-access
+
+  admin_access:
+    name: skin-chat-admin-access

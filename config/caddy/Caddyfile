@@ -1,0 +1,22 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$N8N_DOMAIN} {
+	encode zstd gzip
+
+	@line_webhook path {$LINE_WEBHOOK_PATH}
+	@unexpected_webhook path /webhook*
+
+	# route preserves this security-sensitive order: accept the configured LINE
+	# path, reject every other webhook path, then send normal UI traffic to n8n.
+	route {
+		reverse_proxy @line_webhook line-signature-gateway:8080
+		respond @unexpected_webhook "Not found" 404
+		reverse_proxy n8n:5678
+	}
+
+	header {
+		-Server
+	}
+}
